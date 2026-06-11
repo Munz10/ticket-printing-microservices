@@ -1,0 +1,14 @@
+services:
+  printing-service:
+    build: ./printing-service
+    ports:
+      - "8081:8081"
+
+  resupply-service:
+    build: ./resupply-service
+    ports:
+      - "8082:8082"
+    environment:
+      PRINTING_SERVICE_URL: http://printing-service:8081
+    depends_on:
+      - printing-service

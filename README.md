@@ -21,7 +21,7 @@ Endpoints:
 Run it:
 ```bash
 cd printing-service
-mvn spring-boot:run
+./mvnw spring-boot:run
 ```
 
 Try it:
@@ -31,18 +31,43 @@ curl -X POST "http://localhost:8081/tickets?type=BUSINESS"
 curl -X POST http://localhost:8081/refill/toner
 ```
 
-### `resupply-service` (planned)
-A small scheduled job that polls `printing-service`'s `/status` endpoint and
-calls `/refill/toner` or `/refill/paper` when levels run low — the
-microservices equivalent of the technician threads in the original project.
+### `resupply-service` (done)
+A scheduled job (default: every 5 seconds) that polls `printing-service`'s
+`/status` endpoint and calls `/refill/toner` or `/refill/paper` when levels
+run low — the microservices equivalent of the technician threads in the
+original project.
+
+Run it (with `printing-service` already running):
+```bash
+cd resupply-service
+./mvnw spring-boot:run
+```
+
+Configuration (`src/main/resources/application.properties`):
+- `printing-service.base-url` — where to find printing-service
+  (overridable via `PRINTING_SERVICE_URL` env var)
+- `resupply.poll-interval-ms` — polling interval in milliseconds
 
 ### `passenger-service` / load generator (future)
 Simulates passengers calling `/tickets` periodically — the equivalent of the
 passenger threads in the original project.
 
+## Running with Docker Compose
+
+Each service has a multi-stage `Dockerfile` (Maven build + JRE runtime).
+`docker-compose.yml` wires them together, with `resupply-service` pointed at
+`printing-service` via its container hostname.
+
+```bash
+docker compose up --build
+```
+
+- `printing-service` → http://localhost:8081
+- `resupply-service` → http://localhost:8082 (no public endpoints yet, just runs the scheduler)
+
 ## Roadmap
 1. ~~`printing-service` with REST API + in-memory state~~
-2. `resupply-service` polling over HTTP
-3. Dockerize both, run via `docker-compose`
+2. ~~`resupply-service` polling over HTTP~~
+3. ~~Dockerize both, run via `docker-compose`~~
 4. Replace polling with events (RabbitMQ/Kafka: "low resource" events)
 5. Add a load-generating passenger service + basic monitoring (Actuator/Prometheus)
