@@ -12,10 +12,10 @@
     </parent>
 
     <groupId>com.ticketsystem</groupId>
-    <artifactId>printing-service</artifactId>
+    <artifactId>passenger-service</artifactId>
     <version>0.1.0</version>
-    <name>printing-service</name>
-    <description>Ticket Printing microservice - manages toner/paper state and prints tickets</description>
+    <name>passenger-service</name>
+    <description>Load generator - periodically prints random tickets via printing-service</description>
 
     <properties>
         <java.version>15</java.version>
@@ -29,10 +29,6 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
         <dependency>
             <groupId>io.micrometer</groupId>

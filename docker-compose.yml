@@ -32,3 +32,24 @@ services:
         condition: service_healthy
       printing-service:
         condition: service_started
+
+  passenger-service:
+    build: ./passenger-service
+    ports:
+      - "8083:8083"
+    environment:
+      PRINTING_SERVICE_URL: http://printing-service:8081
+    depends_on:
+      printing-service:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - printing-service
+      - resupply-service
+      - passenger-service

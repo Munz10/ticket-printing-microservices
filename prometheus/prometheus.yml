@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: printing-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["printing-service:8081"]
+
+  - job_name: resupply-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["resupply-service:8082"]
+
+  - job_name: passenger-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["passenger-service:8083"]

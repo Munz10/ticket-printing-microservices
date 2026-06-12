@@ -50,9 +50,24 @@ Configuration (`src/main/resources/application.properties`):
   (overridable via `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USERNAME`,
   `RABBITMQ_PASSWORD` env vars)
 
-### `passenger-service` / load generator (future)
-Simulates passengers calling `/tickets` periodically — the equivalent of the
-passenger threads in the original project.
+### `passenger-service` (done)
+Load generator that simulates passengers arriving at random and requesting a
+ticket — the equivalent of the passenger threads in the original project.
+On a fixed interval it calls `POST /tickets` on `printing-service` with a
+random ticket type, logging the result (and tolerating `409 Conflict`
+responses when resources are unavailable).
+
+Run it (with `printing-service` already running):
+```bash
+cd passenger-service
+./mvnw spring-boot:run
+```
+
+Configuration (`src/main/resources/application.properties`):
+- `printing-service.base-url` — where to find printing-service
+  (overridable via `PRINTING_SERVICE_URL` env var)
+- `passenger.request-interval-ms` — how often a ticket is requested
+  (overridable via `PASSENGER_REQUEST_INTERVAL_MS` env var)
 
 ## Event-driven architecture
 
@@ -72,12 +87,25 @@ RabbitMQ instead of HTTP polling:
 - The RabbitMQ management UI is available at http://localhost:15672
   (default credentials `guest`/`guest`) when running via Docker Compose.
 
+## Monitoring
+
+Every service exposes Actuator endpoints, including `/actuator/prometheus`
+with Micrometer-formatted metrics
+(`management.endpoints.web.exposure.include=health,info,prometheus`).
+A `prometheus` service (config in [`prometheus/prometheus.yml`](prometheus/prometheus.yml))
+scrapes all three services every 5 seconds when running via Docker Compose.
+
+- `printing-service` health → http://localhost:8081/actuator/health
+- `resupply-service` health → http://localhost:8082/actuator/health
+- `passenger-service` health → http://localhost:8083/actuator/health
+- Prometheus UI → http://localhost:9090
+
 ## Running with Docker Compose
 
 Each service has a multi-stage `Dockerfile` (Maven build + JRE runtime).
-`docker-compose.yml` wires up `rabbitmq`, `printing-service` and
-`resupply-service`, with `resupply-service` pointed at `printing-service` and
-`rabbitmq` via their container hostnames.
+`docker-compose.yml` wires up `rabbitmq`, `printing-service`,
+`resupply-service`, `passenger-service` and `prometheus`, with the services
+pointed at each other via their container hostnames.
 
 ```bash
 docker compose up --build
@@ -85,11 +113,13 @@ docker compose up --build
 
 - `printing-service` → http://localhost:8081
 - `resupply-service` → http://localhost:8082 (no public endpoints yet, just consumes events)
+- `passenger-service` → http://localhost:8083 (no public endpoints yet, just generates load)
 - RabbitMQ management UI → http://localhost:15672 (`guest`/`guest`)
+- Prometheus UI → http://localhost:9090
 
 ## Roadmap
 1. ~~`printing-service` with REST API + in-memory state~~
 2. ~~`resupply-service` polling over HTTP~~
 3. ~~Dockerize both, run via `docker-compose`~~
 4. ~~Replace polling with events (RabbitMQ/Kafka: "low resource" events)~~
-5. Add a load-generating passenger service + basic monitoring (Actuator/Prometheus)
+5. ~~Add a load-generating passenger service + basic monitoring (Actuator/Prometheus)~~
