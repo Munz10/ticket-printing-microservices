@@ -1,6 +1,7 @@
 package com.ticketsystem.printing.service;
 
 import com.ticketsystem.printing.exception.ResourceUnavailableException;
+import com.ticketsystem.printing.messaging.ResourceEventPublisher;
 import com.ticketsystem.printing.model.MachineStatus;
 import com.ticketsystem.printing.model.Ticket;
 import com.ticketsystem.printing.model.TicketType;
@@ -18,16 +19,20 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * This is the service-side equivalent of TicketMachineAdvanced from the
  * original concurrent-ticket-system project, adapted to a request/response
- * (REST) model instead of blocking threads.
+ * (REST) model instead of blocking threads. Low-resource events are
+ * published to RabbitMQ for resupply-service to act on.
  */
 @Service
 public class PrintingMachineService {
 
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicInteger ticketsPrinted = new AtomicInteger(0);
+    private final ResourceEventPublisher eventPublisher;
 
     private int tonerLevel;
     private int paperLevel;
+    private boolean tonerLowNotified = false;
+    private boolean paperLowNotified = false;
 
     private final int fullTonerLevel;
     private final int fullPaperTray;
@@ -36,6 +41,7 @@ public class PrintingMachineService {
     private final int sheetsPerPack;
 
     public PrintingMachineService(
+            ResourceEventPublisher eventPublisher,
             @Value("${machine.toner.initial}") int initialToner,
             @Value("${machine.paper.initial}") int initialPaper,
             @Value("${machine.toner.full}") int fullTonerLevel,
@@ -43,6 +49,7 @@ public class PrintingMachineService {
             @Value("${machine.toner.minimum}") int minimumTonerLevel,
             @Value("${machine.paper.minimum}") int minimumPaperLevel,
             @Value("${machine.paper.sheets-per-pack}") int sheetsPerPack) {
+        this.eventPublisher = eventPublisher;
         this.tonerLevel = initialToner;
         this.paperLevel = initialPaper;
         this.fullTonerLevel = fullTonerLevel;
@@ -69,6 +76,16 @@ public class PrintingMachineService {
             paperLevel -= type.getPaperCost();
             int number = ticketsPrinted.incrementAndGet();
 
+            // Fire-and-forget low-resource events, only once per depletion (until refilled)
+            if (tonerLevel <= minimumTonerLevel && !tonerLowNotified) {
+                tonerLowNotified = true;
+                eventPublisher.publishTonerLow(tonerLevel);
+            }
+            if (paperLevel <= minimumPaperLevel && !paperLowNotified) {
+                paperLowNotified = true;
+                eventPublisher.publishPaperLow(paperLevel);
+            }
+
             return new Ticket(number, type, type.getBasePrice(), Instant.now());
         } finally {
             lock.unlock();
@@ -82,6 +99,7 @@ public class PrintingMachineService {
         lock.lock();
         try {
             tonerLevel = fullTonerLevel;
+            tonerLowNotified = false;
             return currentStatus();
         } finally {
             lock.unlock();
@@ -95,6 +113,9 @@ public class PrintingMachineService {
         lock.lock();
         try {
             paperLevel = Math.min(fullPaperTray, paperLevel + sheetsPerPack);
+            if (paperLevel > minimumPaperLevel) {
+                paperLowNotified = false;
+            }
             return currentStatus();
         } finally {
             lock.unlock();

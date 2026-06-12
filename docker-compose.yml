@@ -1,8 +1,24 @@
 services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   printing-service:
     build: ./printing-service
     ports:
       - "8081:8081"
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   resupply-service:
     build: ./resupply-service
@@ -10,5 +26,9 @@ services:
       - "8082:8082"
     environment:
       PRINTING_SERVICE_URL: http://printing-service:8081
+      RABBITMQ_HOST: rabbitmq
     depends_on:
-      - printing-service
+      rabbitmq:
+        condition: service_healthy
+      printing-service:
+        condition: service_started

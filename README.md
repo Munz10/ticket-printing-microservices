@@ -3,7 +3,7 @@
 A small microservices exploration project, built around the same domain as
 the [concurrent-ticket-system](https://github.com/Munz10/concurrent-ticket-system)
 (toner/paper-constrained ticket printing), but split into independently
-deployable services communicating over HTTP.
+deployable services communicating over HTTP and RabbitMQ.
 
 ## Services
 
@@ -32,12 +32,12 @@ curl -X POST http://localhost:8081/refill/toner
 ```
 
 ### `resupply-service` (done)
-A scheduled job (default: every 5 seconds) that polls `printing-service`'s
-`/status` endpoint and calls `/refill/toner` or `/refill/paper` when levels
-run low — the microservices equivalent of the technician threads in the
-original project.
+Listens for "resource low" events published by `printing-service` over
+RabbitMQ and calls `/refill/toner` or `/refill/paper` on it in response —
+the event-driven equivalent of the technician threads in the original
+project (no more polling).
 
-Run it (with `printing-service` already running):
+Run it (with `printing-service` and RabbitMQ already running):
 ```bash
 cd resupply-service
 ./mvnw spring-boot:run
@@ -46,28 +46,50 @@ cd resupply-service
 Configuration (`src/main/resources/application.properties`):
 - `printing-service.base-url` — where to find printing-service
   (overridable via `PRINTING_SERVICE_URL` env var)
-- `resupply.poll-interval-ms` — polling interval in milliseconds
+- `spring.rabbitmq.*` — RabbitMQ connection settings
+  (overridable via `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USERNAME`,
+  `RABBITMQ_PASSWORD` env vars)
 
 ### `passenger-service` / load generator (future)
 Simulates passengers calling `/tickets` periodically — the equivalent of the
 passenger threads in the original project.
 
+## Event-driven architecture
+
+`printing-service` and `resupply-service` communicate asynchronously via
+RabbitMQ instead of HTTP polling:
+
+- `printing-service` declares a topic exchange named `resource-events`.
+  Whenever toner or paper drops to/below its minimum level (and wasn't
+  already flagged), it publishes a `ResourceLowEvent` with routing key
+  `resource.toner.low` or `resource.paper.low`. The notification is
+  edge-triggered — it fires once per depletion and only fires again after
+  the resource is refilled.
+- `resupply-service` declares a queue (`resupply.resource-events`) bound to
+  that exchange with the pattern `resource.*.low`, and a `@RabbitListener`
+  reacts to each event by calling the corresponding refill endpoint on
+  `printing-service`.
+- The RabbitMQ management UI is available at http://localhost:15672
+  (default credentials `guest`/`guest`) when running via Docker Compose.
+
 ## Running with Docker Compose
 
 Each service has a multi-stage `Dockerfile` (Maven build + JRE runtime).
-`docker-compose.yml` wires them together, with `resupply-service` pointed at
-`printing-service` via its container hostname.
+`docker-compose.yml` wires up `rabbitmq`, `printing-service` and
+`resupply-service`, with `resupply-service` pointed at `printing-service` and
+`rabbitmq` via their container hostnames.
 
 ```bash
 docker compose up --build
 ```
 
 - `printing-service` → http://localhost:8081
-- `resupply-service` → http://localhost:8082 (no public endpoints yet, just runs the scheduler)
+- `resupply-service` → http://localhost:8082 (no public endpoints yet, just consumes events)
+- RabbitMQ management UI → http://localhost:15672 (`guest`/`guest`)
 
 ## Roadmap
 1. ~~`printing-service` with REST API + in-memory state~~
 2. ~~`resupply-service` polling over HTTP~~
 3. ~~Dockerize both, run via `docker-compose`~~
-4. Replace polling with events (RabbitMQ/Kafka: "low resource" events)
+4. ~~Replace polling with events (RabbitMQ/Kafka: "low resource" events)~~
 5. Add a load-generating passenger service + basic monitoring (Actuator/Prometheus)
