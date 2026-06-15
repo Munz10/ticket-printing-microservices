@@ -1,13 +1,26 @@
-# Ticket Printing Microservices
+# Ticket Printing Platform
 
-A small microservices exploration project, built around the same domain as
-the [concurrent-ticket-system](https://github.com/Munz10/concurrent-ticket-system)
-(toner/paper-constrained ticket printing), but split into independently
-deployable services communicating over HTTP and RabbitMQ.
+[![CI](https://github.com/Munz10/ticket-printing-microservices/actions/workflows/ci.yml/badge.svg)](https://github.com/Munz10/ticket-printing-microservices/actions/workflows/ci.yml)
+
+A small platform of independently deployable Spring Boot services that model
+a resource-constrained ticket printer: a printing machine with finite
+toner/paper, a resupply system that reacts to low-resource alerts, and a
+load generator that keeps the machine busy. Services communicate over REST
+and RabbitMQ, ship as Docker images, and expose Prometheus metrics.
+
+## Architecture
+
+```
+passenger-service ---HTTP--> printing-service ---RabbitMQ--> resupply-service
+   (load generator)         (machine state)      (resource     |
+                                  ^                low events)  |
+                                  |__________________HTTP_______|
+                                       (refill toner/paper)
+```
 
 ## Services
 
-### `printing-service` (done)
+### `printing-service`
 Spring Boot REST API that owns the machine state (toner level, paper level,
 tickets printed) in memory.
 
@@ -31,11 +44,10 @@ curl -X POST "http://localhost:8081/tickets?type=BUSINESS"
 curl -X POST http://localhost:8081/refill/toner
 ```
 
-### `resupply-service` (done)
+### `resupply-service`
 Listens for "resource low" events published by `printing-service` over
-RabbitMQ and calls `/refill/toner` or `/refill/paper` on it in response —
-the event-driven equivalent of the technician threads in the original
-project (no more polling).
+RabbitMQ and calls `/refill/toner` or `/refill/paper` on it in response,
+keeping the printer stocked without any polling.
 
 Run it (with `printing-service` and RabbitMQ already running):
 ```bash
@@ -50,11 +62,10 @@ Configuration (`src/main/resources/application.properties`):
   (overridable via `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USERNAME`,
   `RABBITMQ_PASSWORD` env vars)
 
-### `passenger-service` (done)
+### `passenger-service`
 Load generator that simulates passengers arriving at random and requesting a
-ticket — the equivalent of the passenger threads in the original project.
-On a fixed interval it calls `POST /tickets` on `printing-service` with a
-random ticket type, logging the result (and tolerating `409 Conflict`
+ticket. On a fixed interval it calls `POST /tickets` on `printing-service`
+with a random ticket type, logging the result (and tolerating `409 Conflict`
 responses when resources are unavailable).
 
 Run it (with `printing-service` already running):
@@ -117,9 +128,15 @@ docker compose up --build
 - RabbitMQ management UI → http://localhost:15672 (`guest`/`guest`)
 - Prometheus UI → http://localhost:9090
 
-## Roadmap
-1. ~~`printing-service` with REST API + in-memory state~~
-2. ~~`resupply-service` polling over HTTP~~
-3. ~~Dockerize both, run via `docker-compose`~~
-4. ~~Replace polling with events (RabbitMQ/Kafka: "low resource" events)~~
-5. ~~Add a load-generating passenger service + basic monitoring (Actuator/Prometheus)~~
+## Continuous Integration
+
+A [GitHub Actions workflow](.github/workflows/ci.yml) builds and tests each
+service with Maven on every push and pull request to `main`, then builds
+each service's Docker image to make sure it still produces a working
+container.
+
+## Possible extensions
+
+- Persist machine state in Postgres/Redis instead of in-memory
+- Grafana dashboards on top of the existing Prometheus metrics
+- Publish Docker images to a registry from CI
