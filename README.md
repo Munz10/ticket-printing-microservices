@@ -26,7 +26,8 @@ tickets printed) in memory.
 
 Endpoints:
 - `POST /tickets?type=ECONOMY|BUSINESS|FIRST_CLASS|VIP_PREMIUM` — print a ticket
-  (consumes toner/paper, returns `409 Conflict` if not enough resources)
+  (consumes toner/paper, returns `409 Conflict` if not enough resources,
+  `400 Bad Request` for an unknown `type`)
 - `GET /status` — current toner/paper levels and tickets printed
 - `POST /refill/toner` — refill toner to full
 - `POST /refill/paper` — add one pack of paper (capped at full tray)
@@ -97,6 +98,9 @@ RabbitMQ instead of HTTP polling:
   `printing-service`.
 - The RabbitMQ management UI is available at http://localhost:15672
   (default credentials `guest`/`guest`) when running via Docker Compose.
+- If the broker is briefly unavailable when `printing-service` tries to
+  publish a low-resource event, the print request still succeeds — the
+  failure is only logged and recorded as a metric (see below).
 
 ## Monitoring
 
@@ -110,6 +114,22 @@ scrapes all three services every 5 seconds when running via Docker Compose.
 - `resupply-service` health → http://localhost:8082/actuator/health
 - `passenger-service` health → http://localhost:8083/actuator/health
 - Prometheus UI → http://localhost:9090
+
+In addition to the standard JVM/HTTP metrics, each service publishes a few
+domain-specific metrics:
+
+- `printing-service`:
+  - `printing_toner_level` / `printing_paper_level` — current resource gauges
+  - `printing_tickets_printed_total{type}` — tickets printed, by ticket type
+  - `printing_resource_unavailable_total` — print requests rejected with `409`
+  - `printing_resource_low_events_total{resource,outcome}` — low-resource
+    events published to RabbitMQ (`outcome=published|failed`)
+- `resupply-service`:
+  - `resupply_refills_total{resource,outcome}` — refill calls triggered by
+    incoming events (`outcome=success|failed`)
+- `passenger-service`:
+  - `passenger_tickets_requested_total{type,outcome}` — simulated ticket
+    requests (`outcome=printed|rejected|error`)
 
 ## Running with Docker Compose
 

@@ -3,6 +3,7 @@ package com.ticketsystem.passenger.scheduling;
 import com.ticketsystem.passenger.model.Ticket;
 import com.ticketsystem.passenger.model.TicketType;
 import com.ticketsystem.passenger.service.PrintingServiceClient;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,10 +25,12 @@ public class PassengerSimulator {
     private static final TicketType[] TICKET_TYPES = TicketType.values();
 
     private final PrintingServiceClient client;
+    private final MeterRegistry registry;
     private final Random random = new Random();
 
-    public PassengerSimulator(PrintingServiceClient client) {
+    public PassengerSimulator(PrintingServiceClient client, MeterRegistry registry) {
         this.client = client;
+        this.registry = registry;
     }
 
     @Scheduled(fixedDelayString = "${passenger.request-interval-ms:2000}")
@@ -36,10 +39,13 @@ public class PassengerSimulator {
         try {
             Ticket ticket = client.printTicket(type);
             log.info("Printed ticket #{} ({})", ticket.getTicketNumber(), ticket.getType());
+            registry.counter("passenger_tickets_requested_total", "type", type.name(), "outcome", "printed").increment();
         } catch (HttpClientErrorException.Conflict e) {
             log.warn("Could not print {} ticket - resources unavailable", type);
+            registry.counter("passenger_tickets_requested_total", "type", type.name(), "outcome", "rejected").increment();
         } catch (RestClientException e) {
             log.warn("Could not reach printing-service: {}", e.getMessage());
+            registry.counter("passenger_tickets_requested_total", "type", type.name(), "outcome", "error").increment();
         }
     }
 }

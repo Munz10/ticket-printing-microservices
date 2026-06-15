@@ -5,6 +5,11 @@ import com.ticketsystem.printing.messaging.ResourceEventPublisher;
 import com.ticketsystem.printing.model.MachineStatus;
 import com.ticketsystem.printing.model.Ticket;
 import com.ticketsystem.printing.model.TicketType;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.AmqpException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -25,12 +30,16 @@ import java.util.concurrent.locks.ReentrantLock;
 @Service
 public class PrintingMachineService {
 
+    private static final Logger log = LoggerFactory.getLogger(PrintingMachineService.class);
+
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicInteger ticketsPrinted = new AtomicInteger(0);
     private final ResourceEventPublisher eventPublisher;
+    private final MeterRegistry registry;
+    private final Counter resourceUnavailableCounter;
 
-    private int tonerLevel;
-    private int paperLevel;
+    private volatile int tonerLevel;
+    private volatile int paperLevel;
     private boolean tonerLowNotified = false;
     private boolean paperLowNotified = false;
 
@@ -42,6 +51,7 @@ public class PrintingMachineService {
 
     public PrintingMachineService(
             ResourceEventPublisher eventPublisher,
+            MeterRegistry registry,
             @Value("${machine.toner.initial}") int initialToner,
             @Value("${machine.paper.initial}") int initialPaper,
             @Value("${machine.toner.full}") int fullTonerLevel,
@@ -50,6 +60,7 @@ public class PrintingMachineService {
             @Value("${machine.paper.minimum}") int minimumPaperLevel,
             @Value("${machine.paper.sheets-per-pack}") int sheetsPerPack) {
         this.eventPublisher = eventPublisher;
+        this.registry = registry;
         this.tonerLevel = initialToner;
         this.paperLevel = initialPaper;
         this.fullTonerLevel = fullTonerLevel;
@@ -57,6 +68,12 @@ public class PrintingMachineService {
         this.minimumTonerLevel = minimumTonerLevel;
         this.minimumPaperLevel = minimumPaperLevel;
         this.sheetsPerPack = sheetsPerPack;
+
+        registry.gauge("printing_toner_level", this, m -> m.tonerLevel);
+        registry.gauge("printing_paper_level", this, m -> m.paperLevel);
+        this.resourceUnavailableCounter = Counter.builder("printing_resource_unavailable_total")
+                .description("Number of print requests rejected due to insufficient toner/paper")
+                .register(registry);
     }
 
     /**
@@ -67,6 +84,7 @@ public class PrintingMachineService {
         lock.lock();
         try {
             if (!type.canPrint(tonerLevel, paperLevel)) {
+                resourceUnavailableCounter.increment();
                 throw new ResourceUnavailableException(String.format(
                         "Cannot print %s ticket - need toner=%d, paper=%d but have toner=%d, paper=%d",
                         type.getDisplayName(), type.getTonerCost(), type.getPaperCost(), tonerLevel, paperLevel));
@@ -75,20 +93,35 @@ public class PrintingMachineService {
             tonerLevel -= type.getTonerCost();
             paperLevel -= type.getPaperCost();
             int number = ticketsPrinted.incrementAndGet();
+            registry.counter("printing_tickets_printed_total", "type", type.name()).increment();
 
             // Fire-and-forget low-resource events, only once per depletion (until refilled)
             if (tonerLevel <= minimumTonerLevel && !tonerLowNotified) {
                 tonerLowNotified = true;
-                eventPublisher.publishTonerLow(tonerLevel);
+                publishLowResourceEvent("toner", () -> eventPublisher.publishTonerLow(tonerLevel));
             }
             if (paperLevel <= minimumPaperLevel && !paperLowNotified) {
                 paperLowNotified = true;
-                eventPublisher.publishPaperLow(paperLevel);
+                publishLowResourceEvent("paper", () -> eventPublisher.publishPaperLow(paperLevel));
             }
 
             return new Ticket(number, type, type.getBasePrice(), Instant.now());
         } finally {
             lock.unlock();
+        }
+    }
+
+    /**
+     * Publishes a resource-low event, recording a metric either way. A broker
+     * outage here must not fail the print request that already succeeded.
+     */
+    private void publishLowResourceEvent(String resource, Runnable publish) {
+        try {
+            publish.run();
+            registry.counter("printing_resource_low_events_total", "resource", resource, "outcome", "published").increment();
+        } catch (AmqpException e) {
+            log.warn("Could not publish {} low event: {}", resource, e.getMessage());
+            registry.counter("printing_resource_low_events_total", "resource", resource, "outcome", "failed").increment();
         }
     }
 
