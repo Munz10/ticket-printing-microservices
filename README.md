@@ -114,6 +114,7 @@ scrapes all three services every 5 seconds when running via Docker Compose.
 - `resupply-service` health → http://localhost:8082/actuator/health
 - `passenger-service` health → http://localhost:8083/actuator/health
 - Prometheus UI → http://localhost:9090
+- Grafana → http://localhost:3000 (default credentials `admin`/`admin`)
 
 In addition to the standard JVM/HTTP metrics, each service publishes a few
 domain-specific metrics:
@@ -147,6 +148,13 @@ docker compose up --build
 - `passenger-service` → http://localhost:8083 (no public endpoints yet, just generates load)
 - RabbitMQ management UI → http://localhost:15672 (`guest`/`guest`)
 - Prometheus UI → http://localhost:9090
+- Grafana → http://localhost:3000 (`admin`/`admin`)
+
+Grafana is pre-provisioned (see [`grafana/provisioning`](grafana/provisioning)) with
+a Prometheus datasource and a "Ticket Printing" dashboard
+([`grafana/dashboards/ticket-printing.json`](grafana/dashboards/ticket-printing.json))
+covering toner/paper levels, tickets printed by type, resource-low events,
+resupply refills and passenger request outcomes — no manual setup required.
 
 ## Continuous Integration
 
@@ -158,5 +166,4 @@ container.
 ## Possible extensions
 
 - Persist machine state in Postgres/Redis instead of in-memory
-- Grafana dashboards on top of the existing Prometheus metrics
 - Publish Docker images to a registry from CI
